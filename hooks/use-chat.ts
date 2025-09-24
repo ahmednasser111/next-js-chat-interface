@@ -66,7 +66,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
       setError(null)
 
       try {
-        const response = await apiCall("/api/v1/auth/register", {
+        const response = await apiCall("/auth/api/v1/auth/register", {
           method: "POST",
           body: JSON.stringify(userData),
         })
@@ -89,7 +89,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
       setError(null)
 
       try {
-        const response = await apiCall("/api/v1/auth/login", {
+        const response = await apiCall("/auth/api/v1/auth/login", {
           method: "POST",
           body: JSON.stringify({ email, password }),
         })
@@ -117,7 +117,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
   const logout = useCallback(async () => {
     try {
       if (token) {
-        await apiCall("/api/v1/auth/logout", { method: "POST" })
+        await apiCall("/auth/api/v1/auth/logout", { method: "POST" })
       }
     } catch (err) {
       console.error("Logout error:", err)
@@ -140,7 +140,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
       if (!currentToken) return
 
       try {
-        const response = await fetch(`${gatewayUrl}/api/users/me`, {
+        const response = await fetch(`${gatewayUrl}/chat/api/users/me`, {
           headers: { Authorization: `Bearer ${currentToken}` },
         })
 
@@ -169,7 +169,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
       if (!token) throw new Error("Not authenticated")
 
       try {
-        const response = await apiCall("/api/messages", {
+        const response = await apiCall("/chat/api/messages", {
           method: "POST",
           body: JSON.stringify({ text, roomId }),
         })
@@ -196,7 +196,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
           offset: offset.toString(),
         })
 
-        const response = await apiCall(`/api/messages?${params}`)
+        const response = await apiCall(`/chat/api/messages?${params}`)
         const { messages: messageList } = response
 
         if (roomId === currentRoom || !roomId) {
@@ -223,7 +223,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
           offset: offset.toString(),
         })
 
-        const response = await apiCall(`/api/rooms?${params}`)
+        const response = await apiCall(`/chat/api/rooms?${params}`)
         const { rooms: roomList } = response
         setRooms(roomList)
         return roomList
@@ -240,7 +240,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
       if (!token) throw new Error("Not authenticated")
 
       try {
-        const response = await apiCall("/api/rooms", {
+        const response = await apiCall("chat//api/rooms", {
           method: "POST",
           body: JSON.stringify({ name, description }),
         })
