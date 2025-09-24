@@ -263,7 +263,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 			if (!token) throw new Error("Not authenticated");
 
 			try {
-				const response = await apiCall("chat//api/rooms", {
+				const response = await apiCall("/chat/api/rooms", {
 					method: "POST",
 					body: JSON.stringify({ name, description }),
 				});
