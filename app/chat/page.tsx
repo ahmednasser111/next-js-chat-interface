@@ -1,126 +1,148 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { useChat } from "@/hooks/use-chat"
-import { MessageList } from "@/components/chat/message-list"
-import { MessageInput } from "@/components/chat/message-input"
-import { RoomSidebar } from "@/components/chat/room-sidebar"
-import { ChatHeader } from "@/components/chat/chat-header"
-import type { Room } from "@/lib/types"
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useChat } from "@/hooks/use-chat";
+import { MessageList } from "@/components/chat/message-list";
+import { MessageInput } from "@/components/chat/message-input";
+import { RoomSidebar } from "@/components/chat/room-sidebar";
+import { ChatHeader } from "@/components/chat/chat-header";
+import type { Room } from "@/lib/types";
 
 export default function ChatPage() {
-  const router = useRouter()
-  const {
-    user,
-    isConnected,
-    messages,
-    rooms,
-    currentRoom,
-    onlineUsers,
-    isLoading,
-    error,
-    sendMessage,
-    getMessages,
-    getRooms,
-    createRoom,
-    switchRoom,
-    logout,
-    isAuthenticated,
-  } = useChat()
+	const router = useRouter();
+	const [isMounted, setIsMounted] = useState(false);
+	const {
+		user,
+		isConnected,
+		messages,
+		rooms,
+		currentRoom,
+		onlineUsers,
+		isLoading,
+		sendMessage,
+		getMessages,
+		getRooms,
+		createRoom,
+		switchRoom,
+		logout,
+		isAuthenticated,
+	} = useChat();
 
-  const [currentRoomData, setCurrentRoomData] = useState<Room | undefined>()
+	const [currentRoomData, setCurrentRoomData] = useState<Room | undefined>();
 
-  // Redirect if not authenticated
-  useEffect(() => {
-    if (!isAuthenticated()) {
-      router.push("/auth")
-    }
-  }, [isAuthenticated, router])
+	// Handle client-side mounting
+	useEffect(() => {
+		setIsMounted(true);
+	}, []);
 
-  // Load initial data
-  useEffect(() => {
-    if (isAuthenticated()) {
-      getRooms()
-      getMessages()
-    }
-  }, [isAuthenticated, getRooms, getMessages])
+	// Redirect if not authenticated after component mounts
+	useEffect(() => {
+		if (isMounted && !isAuthenticated()) {
+			router.push("/auth");
+		}
+	}, [isMounted, isAuthenticated, router]);
 
-  // Update current room data
-  useEffect(() => {
-    const roomData = rooms.find((room) => room.id === currentRoom)
-    setCurrentRoomData(roomData)
-  }, [rooms, currentRoom])
+	// Load initial data
+	useEffect(() => {
+		if (isMounted && isAuthenticated()) {
+			getRooms();
+			getMessages();
+		}
+	}, [isMounted, isAuthenticated, getRooms, getMessages]);
 
-  const handleSendMessage = async (text: string) => {
-    try {
-      await sendMessage(text)
-    } catch (error) {
-      console.error("Failed to send message:", error)
-    }
-  }
+	// Update current room data
+	useEffect(() => {
+		const roomData = rooms.find((room) => room.id === currentRoom);
+		setCurrentRoomData(roomData);
+	}, [rooms, currentRoom]);
 
-  const handleRoomSelect = async (roomId: string) => {
-    try {
-      await switchRoom(roomId)
-    } catch (error) {
-      console.error("Failed to switch room:", error)
-    }
-  }
+	const handleSendMessage = async (text: string) => {
+		try {
+			await sendMessage(text);
+		} catch (error) {
+			console.error("Failed to send message:", error);
+		}
+	};
 
-  const handleCreateRoom = async (name: string, description?: string) => {
-    try {
-      await createRoom(name, description)
-    } catch (error) {
-      console.error("Failed to create room:", error)
-    }
-  }
+	const handleRoomSelect = async (roomId: string) => {
+		try {
+			await switchRoom(roomId);
+		} catch (error) {
+			console.error("Failed to switch room:", error);
+		}
+	};
 
-  const handleLogout = async () => {
-    try {
-      await logout()
-      router.push("/auth")
-    } catch (error) {
-      console.error("Failed to logout:", error)
-    }
-  }
+	const handleCreateRoom = async (name: string, description?: string) => {
+		try {
+			await createRoom(name, description);
+		} catch (error) {
+			console.error("Failed to create room:", error);
+		}
+	};
 
-  if (!isAuthenticated()) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-muted-foreground">Redirecting to login...</p>
-        </div>
-      </div>
-    )
-  }
+	const handleLogout = async () => {
+		try {
+			await logout();
+			router.push("/auth");
+		} catch (error) {
+			console.error("Failed to logout:", error);
+		}
+	};
 
-  return (
-    <div className="h-screen bg-background flex">
-      {/* Sidebar */}
-      <RoomSidebar
-        rooms={rooms}
-        currentRoom={currentRoom}
-        onRoomSelect={handleRoomSelect}
-        onCreateRoom={handleCreateRoom}
-        onlineUsers={Array.from(onlineUsers)}
-      />
+	// Show loading while checking authentication
+	if (!isMounted) {
+		return (
+			<div className="min-h-screen bg-background flex items-center justify-center">
+				<div className="text-center">
+					<p className="text-muted-foreground">Loading...</p>
+				</div>
+			</div>
+		);
+	}
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <ChatHeader currentRoom={currentRoomData} user={user} isConnected={isConnected} onLogout={handleLogout} />
+	// Show redirect message while redirecting
+	if (!isAuthenticated()) {
+		return (
+			<div className="min-h-screen bg-background flex items-center justify-center">
+				<div className="text-center">
+					<p className="text-muted-foreground">Redirecting to login...</p>
+				</div>
+			</div>
+		);
+	}
 
-        {/* Messages */}
-        <MessageList messages={messages} currentUserId={user?.id} />
+	return (
+		<div className="h-screen bg-background flex">
+			{/* Sidebar */}
+			<RoomSidebar
+				rooms={rooms}
+				currentRoom={currentRoom}
+				onRoomSelect={handleRoomSelect}
+				onCreateRoom={handleCreateRoom}
+				onlineUsers={Array.from(onlineUsers)}
+			/>
 
-        {/* Message Input */}
-        <MessageInput
-          onSendMessage={handleSendMessage}
-          isLoading={isLoading}
-          placeholder={`Message ${currentRoomData?.name || "global"}`}
-        />
-      </div>
-    </div>
-  )
+			{/* Main Chat Area */}
+			<div className="flex-1 flex flex-col">
+				{/* Header */}
+				<ChatHeader
+					currentRoom={currentRoomData}
+					user={user}
+					isConnected={isConnected}
+					onLogout={handleLogout}
+				/>
+
+				{/* Messages */}
+				<MessageList messages={messages} currentUserId={user?.id} />
+
+				{/* Message Input */}
+				<MessageInput
+					onSendMessage={handleSendMessage}
+					isLoading={isLoading}
+					placeholder={`Message ${currentRoomData?.name || "global"}`}
+				/>
+			</div>
+		</div>
+	);
 }
