@@ -4,6 +4,28 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import type { User, Message, Room } from "@/lib/types";
 
+interface AuthenticatedSocket extends Socket {
+	userId?: string;
+	user?: any;
+}
+
+interface MessageData {
+	text: string;
+	roomId?: string;
+}
+
+interface TypingData {
+	roomId: string;
+	userId: string;
+	isTyping: boolean;
+}
+
+interface UserStatus {
+	status: "online" | "offline";
+	lastSeen: string;
+	userId: string;
+}
+
 // Chat client hook for managing authentication and real-time messaging
 export function useChat(gatewayUrl = "http://localhost:8000") {
 	const [user, setUser] = useState<User | null>(
@@ -22,14 +44,18 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 	const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
 
-	const socketRef = useRef<Socket | null>(null);
+	const socketRef = useRef<AuthenticatedSocket | null>(null);
 	const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 	// Initialize authentication from localStorage
 	useEffect(() => {
 		const savedToken = localStorage.getItem("chat_token");
 		const savedUser = localStorage.getItem("chat_user");
+		const savedRoom = localStorage.getItem("currentRoom");
+
 		if (savedToken) {
 			setToken(savedToken);
 			if (savedUser) {
@@ -38,6 +64,9 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 				} catch {
 					localStorage.removeItem("chat_user");
 				}
+			}
+			if (savedRoom) {
+				setCurrentRoom(savedRoom);
 			}
 			getCurrentUser(savedToken);
 		}
@@ -53,6 +82,9 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 			if (socketRef.current) {
 				socketRef.current.disconnect();
 				socketRef.current = null;
+			}
+			if (reconnectTimeoutRef.current) {
+				clearTimeout(reconnectTimeoutRef.current);
 			}
 		};
 	}, [token, user]);
@@ -84,17 +116,17 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[gatewayUrl, token]
 	);
 
-	// Socket connection with proper event handlers
+	// Socket connection with proper event handlers based on SocketService
 	const connectSocket = useCallback(
 		(authToken: string) => {
 			if (socketRef.current?.connected) return;
 
 			try {
-				socketRef.current = io(`${gatewayUrl}/chat`, {
+				socketRef.current = io(gatewayUrl, {
 					auth: { token: authToken },
-					transports: ["websocket", "polling"],
+					transports: ["websocket"],
 					autoConnect: true,
-				});
+				}) as AuthenticatedSocket;
 
 				const socket = socketRef.current;
 
@@ -102,14 +134,27 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 					console.log("Socket connected:", socket.id);
 					setIsConnected(true);
 					setError(null);
+
+					// Auto-join current room if set
+					if (currentRoom) {
+						socket.emit("join:room", currentRoom);
+					}
+
+					// Request online users list
+					socket.emit("users:online");
 				});
 
 				socket.on("disconnect", (reason) => {
 					console.log("Socket disconnected:", reason);
 					setIsConnected(false);
+
+					// Auto-reconnect on server disconnect
 					if (reason === "io server disconnect") {
-						// Server forcibly disconnected, try to reconnect
-						socket.connect();
+						reconnectTimeoutRef.current = setTimeout(() => {
+							if (token && user) {
+								socket.connect();
+							}
+						}, 2000);
 					}
 				});
 
@@ -119,14 +164,18 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 					setError("Connection failed. Please try again.");
 				});
 
-				// Real-time message events
+				// Real-time message events (matching SocketService)
 				socket.on("message:new", (message: Message) => {
 					console.log("New message received:", message);
 					setMessages((prev) => {
 						// Avoid duplicates
 						const exists = prev.some((m) => m.id === message.id);
 						if (exists) return prev;
-						return [...prev, message];
+						return [...prev, message].sort(
+							(a, b) =>
+								new Date(a.createdAt).getTime() -
+								new Date(b.createdAt).getTime()
+						);
 					});
 				});
 
@@ -144,47 +193,66 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 					);
 				});
 
-				// User presence events
-				socket.on("user:joined", (data: { userId: string; roomId: string }) => {
-					console.log("User joined:", data);
-					if (data.roomId === currentRoom) {
-						setOnlineUsers((prev) => new Set([...prev, data.userId]));
-					}
-				});
-
-				socket.on("user:left", (data: { userId: string; roomId: string }) => {
-					console.log("User left:", data);
-					if (data.roomId === currentRoom) {
-						setOnlineUsers((prev) => {
-							const newSet = new Set(prev);
-							newSet.delete(data.userId);
-							return newSet;
-						});
-					}
-				});
-
-				socket.on("users:online", (data: { users: string[] }) => {
-					console.log("Online users updated:", data);
-					setOnlineUsers(new Set(data.users));
-				});
-
-				// Typing events
+				// User presence events (matching SocketService)
 				socket.on(
-					"typing:start",
-					(data: { userId: string; roomId: string }) => {
-						if (data.roomId === currentRoom && data.userId !== user?.id) {
-							setTypingUsers((prev) => new Set([...prev, data.userId]));
+					"user:joined",
+					(data: { userId: string; roomId: string; timestamp: Date }) => {
+						console.log("User joined:", data);
+						if (data.roomId === currentRoom) {
+							setOnlineUsers((prev) => new Set([...prev, data.userId]));
 						}
 					}
 				);
 
-				socket.on("typing:stop", (data: { userId: string; roomId: string }) => {
-					if (data.roomId === currentRoom) {
-						setTypingUsers((prev) => {
-							const newSet = new Set(prev);
-							newSet.delete(data.userId);
-							return newSet;
-						});
+				socket.on(
+					"user:left",
+					(data: { userId: string; roomId: string; timestamp: Date }) => {
+						console.log("User left:", data);
+						if (data.roomId === currentRoom) {
+							setOnlineUsers((prev) => {
+								const newSet = new Set(prev);
+								newSet.delete(data.userId);
+								return newSet;
+							});
+						}
+					}
+				);
+
+				socket.on("users:online:list", (data: { users: string[] }) => {
+					console.log("Online users updated:", data);
+					setOnlineUsers(new Set(data.users));
+				});
+
+				socket.on(
+					"user:status",
+					(data: {
+						userId: string;
+						status: "online" | "offline";
+						timestamp: Date;
+					}) => {
+						console.log("User status updated:", data);
+						if (data.userId === user?.id) {
+							setUserStatus({
+								userId: data.userId,
+								status: data.status,
+								lastSeen: data.timestamp.toString(),
+							});
+						}
+					}
+				);
+
+				// Typing events (matching SocketService)
+				socket.on("typing:user", (data: TypingData) => {
+					if (data.roomId === currentRoom && data.userId !== user?.id) {
+						if (data.isTyping) {
+							setTypingUsers((prev) => new Set([...prev, data.userId]));
+						} else {
+							setTypingUsers((prev) => {
+								const newSet = new Set(prev);
+								newSet.delete(data.userId);
+								return newSet;
+							});
+						}
 					}
 				});
 
@@ -205,6 +273,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 					if (currentRoom === data.roomId) {
 						setCurrentRoom("");
 						setMessages([]);
+						localStorage.removeItem("currentRoom");
 					}
 				});
 
@@ -218,7 +287,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 				setError("Failed to establish real-time connection");
 			}
 		},
-		[gatewayUrl, currentRoom, user?.id]
+		[gatewayUrl, currentRoom, user?.id, token]
 	);
 
 	// Authentication functions
@@ -303,11 +372,20 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 			setRooms([]);
 			setOnlineUsers(new Set());
 			setTypingUsers(new Set());
+			setUserStatus(null);
 
 			// Clear localStorage
 			localStorage.removeItem("chat_token");
 			localStorage.removeItem("chat_user");
 			localStorage.removeItem("currentRoom");
+
+			// Clear timeouts
+			if (reconnectTimeoutRef.current) {
+				clearTimeout(reconnectTimeoutRef.current);
+			}
+			if (typingTimeoutRef.current) {
+				clearTimeout(typingTimeoutRef.current);
+			}
 
 			// Disconnect socket
 			if (socketRef.current) {
@@ -342,9 +420,9 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[gatewayUrl, token]
 	);
 
-	// Message functions
+	// Message functions (matching SocketService events)
 	const sendMessage = useCallback(
-		async (text: string, roomId?: string) => {
+		async (text: string, roomId: string) => {
 			const targetRoom = roomId || currentRoom;
 
 			// Ensure user is in a room before sending
@@ -353,6 +431,15 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 			}
 
 			if (!token) throw new Error("Not authenticated");
+
+			// Validate message
+			if (!text || text.trim().length === 0) {
+				throw new Error("Message text is required");
+			}
+
+			if (text.length > 1000) {
+				throw new Error("Message too long (max 1000 characters)");
+			}
 
 			try {
 				// Send via socket for real-time if connected, fallback to API
@@ -379,7 +466,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 	);
 
 	const getMessages = useCallback(
-		async (roomId?: string, limit = 50, offset = 0) => {
+		async (roomId: string, limit = 50, offset = 0) => {
 			if (!token) return [];
 
 			try {
@@ -405,7 +492,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[apiCall, token, currentRoom]
 	);
 
-	// Room functions
+	// Room functions (removed global room references)
 	const getRooms = useCallback(
 		async (limit = 20, offset = 0) => {
 			if (!token) return [];
@@ -419,14 +506,8 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 				const response = await apiCall(`/chat/api/rooms?${params}`);
 				const { rooms: roomList } = response;
 
-				// Filter out any "global" rooms that might exist
-				const filteredRooms = roomList.filter(
-					(room: Room) =>
-						room.id !== "global" && room.name.toLowerCase() !== "global"
-				);
-
-				setRooms(filteredRooms);
-				return filteredRooms;
+				setRooms(roomList);
+				return roomList;
 			} catch (err) {
 				console.error("Get rooms error:", err);
 				return [];
@@ -456,20 +537,23 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[apiCall, token]
 	);
 
-	const switchRoom = useCallback(
+	const joinRoom = useCallback(
 		async (roomId: string) => {
+			if (!roomId) throw new Error("Room ID is required");
+
 			// Leave current room if connected via socket
 			if (currentRoom && socketRef.current?.connected) {
-				socketRef.current.emit("room:leave", currentRoom);
+				socketRef.current.emit("leave:room", currentRoom);
 			}
 
 			// Update current room
 			setCurrentRoom(roomId);
 			setMessages([]); // Clear messages when switching rooms
+			setTypingUsers(new Set()); // Clear typing users
 
 			// Join new room if connected via socket
 			if (socketRef.current?.connected) {
-				socketRef.current.emit("room:join", roomId);
+				socketRef.current.emit("join:room", roomId);
 			}
 
 			// Load room messages
@@ -481,7 +565,56 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[currentRoom, getMessages]
 	);
 
-	// Typing functions
+	const leaveRoom = useCallback(
+		(roomId: string) => {
+			if (socketRef.current?.connected) {
+				socketRef.current.emit("leave:room", roomId);
+			}
+
+			if (roomId === currentRoom) {
+				setCurrentRoom("");
+				setMessages([]);
+				setTypingUsers(new Set());
+				localStorage.removeItem("currentRoom");
+			}
+		},
+		[currentRoom]
+	);
+
+	const switchRoom = useCallback(
+		async (roomId: string) => {
+			try {
+				if (!roomId) throw new Error("Room ID is required");
+
+				// Leave current room if connected via socket
+				if (currentRoom && socketRef.current?.connected) {
+					socketRef.current.emit("leave:room", currentRoom);
+				}
+
+				// Update current room
+				setCurrentRoom(roomId);
+				setMessages([]); // Clear messages when switching rooms
+				setTypingUsers(new Set()); // Clear typing users
+
+				// Join new room if connected via socket
+				if (socketRef.current?.connected) {
+					socketRef.current.emit("join:room", roomId);
+				}
+
+				// Load room messages
+				await getMessages(roomId);
+
+				// Save to localStorage
+				localStorage.setItem("currentRoom", roomId);
+			} catch (error) {
+				console.error("Error switching room:", error);
+				throw error;
+			}
+		},
+		[currentRoom, getMessages]
+	);
+
+	// Typing functions (matching SocketService events)
 	const startTyping = useCallback(() => {
 		if (currentRoom && socketRef.current?.connected) {
 			socketRef.current.emit("typing:start", { roomId: currentRoom });
@@ -494,24 +627,49 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		}
 	}, [currentRoom]);
 
-	// Connection check function
-	const checkConnection = useCallback(() => {
-		if (!socketRef.current) {
+	// Enhanced connection check with API call
+	const checkConnection = useCallback(async () => {
+		if (!token) {
 			setIsConnected(false);
 			return false;
 		}
 
-		const connected = socketRef.current.connected;
-		setIsConnected(connected);
+		try {
+			// Check socket connection
+			const socketConnected = socketRef.current?.connected || false;
 
-		// If not connected, try to reconnect
-		if (!connected && token) {
-			console.log("Attempting to reconnect...");
-			socketRef.current.connect();
+			// Check API connection and user status
+			const response = await apiCall("/chat/api/users/status");
+
+			if (response) {
+				setUserStatus(response);
+				setIsConnected(socketConnected);
+
+				// If socket is not connected but API is working, try to reconnect socket
+				if (!socketConnected && token && user) {
+					console.log(
+						"API working but socket disconnected, attempting reconnect..."
+					);
+					connectSocket(token);
+				}
+
+				return true;
+			}
+		} catch (err) {
+			console.error("Connection check failed:", err);
+			setIsConnected(false);
+
+			// Try to reconnect socket if we have credentials
+			if (token && user && !socketRef.current?.connected) {
+				console.log("Connection check failed, attempting socket reconnect...");
+				connectSocket(token);
+			}
+
+			return false;
 		}
 
-		return connected;
-	}, [token]);
+		return false;
+	}, [apiCall, token, user, connectSocket]);
 
 	// Utility functions
 	const isAuthenticated = useCallback(() => {
@@ -521,6 +679,25 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 	const canSendMessage = useCallback(() => {
 		return !!(token && user && currentRoom);
 	}, [token, user, currentRoom]);
+
+	const getUsersOnlineCount = useCallback(() => {
+		return onlineUsers.size;
+	}, [onlineUsers]);
+
+	const getTypingUsersCount = useCallback(() => {
+		return typingUsers.size;
+	}, [typingUsers]);
+
+	// Auto-refresh connection status
+	useEffect(() => {
+		if (!token || !user) return;
+
+		const interval = setInterval(() => {
+			checkConnection();
+		}, 30000); // Check every 30 seconds
+
+		return () => clearInterval(interval);
+	}, [token, user, checkConnection]);
 
 	return {
 		// State
@@ -534,6 +711,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		typingUsers,
 		isLoading,
 		error,
+		userStatus,
 
 		// Auth functions
 		register,
@@ -548,6 +726,8 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		// Room functions
 		getRooms,
 		createRoom,
+		joinRoom,
+		leaveRoom,
 		switchRoom,
 
 		// Typing functions
@@ -558,5 +738,7 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		isAuthenticated,
 		canSendMessage,
 		checkConnection,
+		getUsersOnlineCount,
+		getTypingUsersCount,
 	};
 }

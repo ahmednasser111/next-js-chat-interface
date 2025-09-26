@@ -14,7 +14,6 @@ export default function ChatPage() {
 	const [isMounted, setIsMounted] = useState(false);
 	const {
 		user,
-		isConnected,
 		messages,
 		rooms,
 		currentRoom,
@@ -27,6 +26,7 @@ export default function ChatPage() {
 		switchRoom,
 		logout,
 		isAuthenticated,
+		userStatus,
 	} = useChat();
 
 	const [currentRoomData, setCurrentRoomData] = useState<Room | undefined>();
@@ -47,7 +47,6 @@ export default function ChatPage() {
 	useEffect(() => {
 		if (isMounted && isAuthenticated()) {
 			getRooms();
-			getMessages();
 		}
 	}, [isMounted, isAuthenticated, getRooms, getMessages]);
 
@@ -59,7 +58,7 @@ export default function ChatPage() {
 
 	const handleSendMessage = async (text: string) => {
 		try {
-			await sendMessage(text);
+			await sendMessage(text, currentRoom);
 		} catch (error) {
 			console.error("Failed to send message:", error);
 		}
@@ -129,7 +128,7 @@ export default function ChatPage() {
 				<ChatHeader
 					currentRoom={currentRoomData}
 					user={user}
-					isConnected={isConnected}
+					isConnected={userStatus?.status === "online"}
 					onLogout={handleLogout}
 				/>
 
