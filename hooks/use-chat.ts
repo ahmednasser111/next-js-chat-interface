@@ -537,50 +537,6 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		[apiCall, token]
 	);
 
-	const joinRoom = useCallback(
-		async (roomId: string) => {
-			if (!roomId) throw new Error("Room ID is required");
-
-			// Leave current room if connected via socket
-			if (currentRoom && socketRef.current?.connected) {
-				socketRef.current.emit("leave:room", currentRoom);
-			}
-
-			// Update current room
-			setCurrentRoom(roomId);
-			setMessages([]); // Clear messages when switching rooms
-			setTypingUsers(new Set()); // Clear typing users
-
-			// Join new room if connected via socket
-			if (socketRef.current?.connected) {
-				socketRef.current.emit("join:room", roomId);
-			}
-
-			// Load room messages
-			await getMessages(roomId);
-
-			// Save to localStorage
-			localStorage.setItem("currentRoom", roomId);
-		},
-		[currentRoom, getMessages]
-	);
-
-	const leaveRoom = useCallback(
-		(roomId: string) => {
-			if (socketRef.current?.connected) {
-				socketRef.current.emit("leave:room", roomId);
-			}
-
-			if (roomId === currentRoom) {
-				setCurrentRoom("");
-				setMessages([]);
-				setTypingUsers(new Set());
-				localStorage.removeItem("currentRoom");
-			}
-		},
-		[currentRoom]
-	);
-
 	const switchRoom = useCallback(
 		async (roomId: string) => {
 			try {
@@ -726,8 +682,6 @@ export function useChat(gatewayUrl = "http://localhost:8000") {
 		// Room functions
 		getRooms,
 		createRoom,
-		joinRoom,
-		leaveRoom,
 		switchRoom,
 
 		// Typing functions

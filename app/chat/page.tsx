@@ -54,6 +54,7 @@ export default function ChatPage() {
 	useEffect(() => {
 		const roomData = rooms.find((room) => room.id === currentRoom);
 		setCurrentRoomData(roomData);
+		getMessages(currentRoom);
 	}, [rooms, currentRoom]);
 
 	const handleSendMessage = async (text: string) => {
@@ -67,6 +68,7 @@ export default function ChatPage() {
 	const handleRoomSelect = async (roomId: string) => {
 		try {
 			await switchRoom(roomId);
+			await getMessages(roomId);
 		} catch (error) {
 			console.error("Failed to switch room:", error);
 		}
@@ -139,7 +141,11 @@ export default function ChatPage() {
 				<MessageInput
 					onSendMessage={handleSendMessage}
 					isLoading={isLoading}
-					placeholder={`Message ${currentRoomData?.name || "global"}`}
+					placeholder={
+						currentRoomData
+							? `Message ${currentRoomData.name}`
+							: "Select a room to send messages"
+					}
 				/>
 			</div>
 		</div>
